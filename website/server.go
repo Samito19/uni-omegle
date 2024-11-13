@@ -24,7 +24,7 @@ func main() {
 	// File server for the website's statis files
 	fs := http.FileServer(http.Dir("./website/static"))
 	if fs == nil {
-		log.Fatal("Failed to create file server")
+		log.Fatal("Error: Failed to create file server")
 	}
 
 	mux.Handle("/", LoggingMiddleware(fs))
