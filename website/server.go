@@ -22,7 +22,7 @@ func main() {
 	mux := http.NewServeMux()
 
 	// File server for the website's statis files
-	fs := http.FileServer(http.Dir("./website/static"))
+	fs := http.FileServer(http.Dir("./static"))
 	if fs == nil {
 		log.Fatal("Error: Failed to create file server")
 	}

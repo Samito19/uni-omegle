@@ -6,11 +6,8 @@ import (
 )
 
 func main() {
-	room := newRoom()
-	go room.run()
-
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		serveWs(room, w, r)
+		serveWs(w, r)
 	})
 
 	err := http.ListenAndServe(":8080", nil)

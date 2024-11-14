@@ -20,7 +20,11 @@ const (
 	pingPeriod = (pongWait * 9) / 10
 
 	// Maximum message size allowed from peer.
-	maxMessageSize = 512
+	maxMessageSize = 4096
+
+	// Constants for implementing the perfect negotiation scheme
+	polite   = 0
+	impolite = 1
 )
 
 var (
@@ -29,13 +33,16 @@ var (
 )
 
 var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
+	WriteBufferSize: 4096,
+	ReadBufferSize:  4096,
 }
+
+type PeerRole = int
 
 type Client struct {
 	room *Room
 	conn *websocket.Conn
+	role PeerRole
 	send chan []byte
 }
 
@@ -74,10 +81,11 @@ func (c *Client) writePump() {
 		select {
 		case message, ok := <-c.send:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			log.Println("Received : " + string(message))
 			if !ok {
-				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
-				log.Println("Error: Failed to received message, closing connection...")
-				return
+				// c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				log.Println("Error: Failed to receive message, closing connection...")
+				// return
 			}
 
 			w, err := c.conn.NextWriter(websocket.TextMessage)
@@ -85,6 +93,7 @@ func (c *Client) writePump() {
 				log.Println("Error: Failed to open NextWriter")
 				return
 			}
+
 			_, err = w.Write(message)
 			if err != nil {
 				log.Println("Error: Failed to write to clients " + err.Error())
@@ -97,8 +106,8 @@ func (c *Client) writePump() {
 				w.Write(<-c.send)
 			}
 
+			log.Println("Error: Failed to close c.Writer")
 			if err := w.Close(); err != nil {
-				log.Println("Error: Failed to close c.Writer")
 				return
 			}
 
@@ -112,7 +121,10 @@ func (c *Client) writePump() {
 	}
 }
 
-func serveWs(room *Room, w http.ResponseWriter, r *http.Request) {
+var clientsQueue []*Client
+
+func serveWs(w http.ResponseWriter, r *http.Request) {
+	log.Printf("Queue: %v\n", clientsQueue)
 	upgrader.CheckOrigin = func(r *http.Request) bool { return true }
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -121,9 +133,39 @@ func serveWs(room *Room, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client := &Client{room: room, conn: conn, send: make(chan []byte, 256)}
-	client.room.register <- client
+	client := &Client{room: nil, conn: conn, send: make(chan []byte, 256)}
+	clientsQueue = append(clientsQueue, client)
 
-	go client.writePump()
-	go client.readPump()
+	if len(clientsQueue) > 1 {
+		log.Println("Matching in process!")
+		room := newRoom()
+		go room.run()
+
+		// Assign roles
+		clientsQueue[0].role = impolite
+		clientsQueue[1].role = polite
+		clientsQueue[0].send <- []byte("{\"peerType\": \"impolite\"}")
+		clientsQueue[1].send <- []byte("{\"peerType\": \"polite\"}")
+
+		// Assign new room
+		clientsQueue[0].room = room
+		clientsQueue[1].room = room
+
+		//Register clients to a room
+		clientsQueue[0].room.register <- clientsQueue[0]
+		clientsQueue[1].room.register <- clientsQueue[1]
+
+		for i := 0; i < 2; i++ {
+			go clientsQueue[i].writePump()
+			go clientsQueue[i].readPump()
+		}
+
+		// Flush the queue
+		if len(clientsQueue) > 2 {
+			clientsQueue = clientsQueue[2:]
+		} else {
+			clientsQueue = clientsQueue[:0]
+		}
+	}
+	log.Printf("Queue: %v\n", clientsQueue)
 }
